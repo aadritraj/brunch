@@ -2,13 +2,12 @@ mod icons;
 mod style;
 mod view;
 
-use std::sync::{Arc, Mutex};
-
 use iced::keyboard::key::{Key, Named};
 use iced::{Element, Subscription, Task, keyboard, widget, window};
 
 use crate::{
     applications::{DesktopEntry, DesktopEntryScanner},
+    launch::{ActionExecutor, DesktopEntryLaunch, SystemExecutor},
     search,
 };
 
@@ -22,7 +21,6 @@ pub enum Message {
     MoveUp,
     MoveDown,
     Select(usize),
-    Submit,
     Dismiss,
     WindowEvent(window::Event),
     KeyPressed(Key),
@@ -34,18 +32,20 @@ pub struct Launcher {
     matches: Vec<usize>,
     selected: usize,
     selection: Option<usize>,
-    selected_app: Arc<Mutex<Option<String>>>,
+    selection_error: Option<String>,
+    executor: SystemExecutor,
 }
 
 impl Launcher {
-    fn new(selected_app: Arc<Mutex<Option<String>>>) -> (Self, Task<Message>) {
+    fn new() -> (Self, Task<Message>) {
         let mut launcher = Self {
             scanner: DesktopEntryScanner::discover(),
             query: String::new(),
             matches: Vec::new(),
             selected: 0,
             selection: None,
-            selected_app,
+            selection_error: None,
+            executor: SystemExecutor,
         };
         launcher.refresh_matches();
         (
@@ -67,12 +67,7 @@ impl Launcher {
             Message::MoveUp => return self.move_selection_and_scroll(-1),
             Message::MoveDown => return self.move_selection_and_scroll(1),
             Message::Select(index) => {
-                self.select(index);
-                return iced::exit();
-            }
-            Message::Submit => {
-                if let Some(index) = self.matches.get(self.selected).copied() {
-                    self.select(index);
+                if self.select(index) {
                     return iced::exit();
                 }
             }
@@ -88,8 +83,9 @@ impl Launcher {
                 return self.move_selection_and_scroll(1);
             }
             Message::KeyPressed(Key::Named(Named::Enter)) => {
-                if let Some(index) = self.matches.get(self.selected).copied() {
-                    self.select(index);
+                if let Some(index) = self.matches.get(self.selected).copied()
+                    && self.select(index)
+                {
                     return iced::exit();
                 }
             }
@@ -134,6 +130,7 @@ impl Launcher {
             })
             .collect();
         self.selected = self.selected.min(self.matches.len().saturating_sub(1));
+        self.selection_error = None;
     }
 
     fn move_selection_and_scroll(&mut self, direction: isize) -> Task<Message> {
@@ -156,36 +153,38 @@ impl Launcher {
         )
     }
 
-    fn select(&mut self, index: usize) {
+    fn select(&mut self, index: usize) -> bool {
         self.selection = Some(index);
-        if let Some(entry) = self.scanner.entries().get(index)
-            && let Ok(mut selected_app) = self.selected_app.lock()
-        {
-            *selected_app = Some(entry.appid.clone());
+        self.selection_error = None;
+
+        let Some(entry) = self.scanner.entries().get(index) else {
+            self.selection_error = Some("Selected application is no longer available".into());
+            return false;
+        };
+        match DesktopEntryLaunch::from_entry(entry) {
+            Ok(action) => match self.executor.execute(&action.into()) {
+                Ok(()) => true,
+                Err(error) => {
+                    self.selection_error = Some(error.to_string());
+                    false
+                }
+            },
+            Err(error) => {
+                self.selection_error = Some(error.to_string());
+                false
+            }
         }
     }
 }
 
-pub fn run() -> Result<Option<String>, iced::Error> {
-    let selected_app = Arc::new(Mutex::new(None));
-    let app_selected = Arc::clone(&selected_app);
-    iced::application(
-        move || Launcher::new(Arc::clone(&app_selected)),
-        Launcher::update,
-        Launcher::view,
-    )
-    .title("Brunch")
-    .subscription(Launcher::subscription)
-    .decorations(false)
-    .resizable(false)
-    .window_size([760.0, 520.0])
-    .centered()
-    .level(window::Level::AlwaysOnTop)
-    .run()
-    .map(|_| {
-        selected_app
-            .lock()
-            .ok()
-            .and_then(|selection| selection.clone())
-    })
+pub fn run() -> Result<(), iced::Error> {
+    iced::application(Launcher::new, Launcher::update, Launcher::view)
+        .title("Brunch")
+        .subscription(Launcher::subscription)
+        .decorations(false)
+        .resizable(false)
+        .window_size([760.0, 520.0])
+        .centered()
+        .level(window::Level::AlwaysOnTop)
+        .run()
 }

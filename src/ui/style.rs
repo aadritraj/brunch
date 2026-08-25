@@ -11,11 +11,12 @@ pub const SURFACE_SELECTED: Color = Color::from_rgb(0.22, 0.24, 0.29);
 pub const TEXT: Color = Color::from_rgb(0.93, 0.94, 0.96);
 pub const MUTED: Color = Color::from_rgb(0.62, 0.65, 0.70);
 pub const ACCENT: Color = Color::from_rgb(0.45, 0.66, 0.95);
+pub const ERROR: Color = Color::from_rgb(0.95, 0.38, 0.38);
+pub const SURFACE_ERROR: Color = Color::from_rgb(0.34, 0.16, 0.18);
 pub const RADIUS: f32 = 12.0;
 pub const RESULT_ROW_HEIGHT: f32 = 56.0;
 pub const PADDING: u16 = 20;
 pub const GAP: f32 = 10.0;
-pub const RESULTS_BOTTOM_PADDING: f32 = 360.0;
 
 pub fn background(_theme: &Theme) -> container::Style {
     container::Style {
@@ -49,12 +50,17 @@ pub fn search_input(_theme: &Theme, status: text_input::Status) -> text_input::S
     style
 }
 
-pub fn result_button(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+pub fn result_button(
+    selected: bool,
+    failed: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_theme, status| {
         let highlighted = selected || matches!(status, button::Status::Hovered);
 
         button::Style {
-            background: Some(Background::Color(if highlighted {
+            background: Some(Background::Color(if failed {
+                SURFACE_ERROR
+            } else if highlighted {
                 SURFACE_SELECTED
             } else {
                 SURFACE

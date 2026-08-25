@@ -12,7 +12,6 @@ pub fn render(launcher: &Launcher) -> Element<'_, Message> {
     let search = text_input("Search applications…", &launcher.query)
         .id(iced::widget::Id::new(SEARCH_INPUT_ID))
         .on_input(Message::QueryChanged)
-        .on_submit(Message::Submit)
         .padding(12)
         .width(Fill)
         .style(super::style::search_input);
@@ -26,6 +25,7 @@ pub fn render(launcher: &Launcher) -> Element<'_, Message> {
                 &launcher.scanner.entries()[*index],
                 *index,
                 position == launcher.selected,
+                launcher.selection == Some(*index) && launcher.selection_error.is_some(),
                 &locales,
             )
         })
@@ -41,14 +41,21 @@ pub fn render(launcher: &Launcher) -> Element<'_, Message> {
     } else {
         column(results).spacing(super::style::GAP)
     };
-    let content = container(content)
-        .padding(iced::Padding::default().bottom(super::style::RESULTS_BOTTOM_PADDING));
+    let error = launcher
+        .selection_error
+        .as_deref()
+        .map(|message| text(message).size(13).color(super::style::ERROR));
+    let content = container(content);
     let results = scrollable(content)
         .id(iced::widget::Id::new(RESULTS_ID))
         .height(Fill);
-    let body = column![search, results]
-        .spacing(super::style::GAP)
-        .padding(super::style::PADDING);
+    let body = if let Some(error) = error {
+        column![search, error, results]
+    } else {
+        column![search, results]
+    }
+    .spacing(super::style::GAP)
+    .padding(super::style::PADDING);
     container(
         container(body)
             .style(super::style::panel)
@@ -65,6 +72,7 @@ fn result_row<'a>(
     entry: &'a DesktopEntry,
     index: usize,
     selected: bool,
+    failed: bool,
     locales: &[String],
 ) -> Element<'a, Message> {
     let icon: Element<'_, Message> = match super::icons::handle(entry) {
@@ -96,6 +104,6 @@ fn result_row<'a>(
     .width(Fill)
     .height(super::style::RESULT_ROW_HEIGHT)
     .padding(10)
-    .style(super::style::result_button(selected))
+    .style(super::style::result_button(selected, failed))
     .into()
 }
