@@ -1,3 +1,4 @@
+use freedesktop_desktop_entry::get_languages_from_env;
 use nucleo_matcher::{
     Config, Matcher,
     pattern::{AtomKind, CaseMatching, Normalization, Pattern},
@@ -9,18 +10,25 @@ pub fn fuzzy_applications<'a>(
     scanner: &'a DesktopEntryScanner,
     query: &str,
 ) -> Vec<&'a DesktopEntry> {
+    let locales = get_languages_from_env();
     if query.trim().is_empty() {
-        return scanner.entries().iter().collect();
+        let mut entries = scanner.entries().iter().collect::<Vec<_>>();
+        entries.sort_by(|left, right| {
+            left.name(&locales)
+                .unwrap_or_default()
+                .cmp(&right.name(&locales).unwrap_or_default())
+                .then_with(|| left.appid.cmp(&right.appid))
+        });
+        return entries;
     }
 
-    let locales: &[&str] = &[];
     let haystacks = scanner
         .entries()
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let name = entry.name(locales).unwrap_or_default();
-            let comment = entry.comment(locales).unwrap_or_default();
+            let name = entry.name(&locales).unwrap_or_default();
+            let comment = entry.comment(&locales).unwrap_or_default();
             format!("{index}\t{name}\t{comment}")
         })
         .collect::<Vec<_>>();
