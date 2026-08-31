@@ -6,6 +6,8 @@ use nucleo_matcher::{
 
 use crate::applications::{DesktopEntry, DesktopEntryScanner};
 
+const MATCH_CONFIDENCE: f32 = 0.80;
+
 pub fn fuzzy_applications<'a>(
     scanner: &'a DesktopEntryScanner,
     query: &str,
@@ -40,9 +42,14 @@ pub fn fuzzy_applications<'a>(
         AtomKind::Fuzzy,
     );
 
-    let indexes = pattern
-        .match_list(haystacks.iter().map(String::as_str), &mut matcher)
+    let matches = pattern.match_list(haystacks.iter().map(String::as_str), &mut matcher);
+    let minimum_score = matches
+        .first()
+        .map(|(_, score)| *score as f32 * MATCH_CONFIDENCE)
+        .unwrap_or_default();
+    let indexes = matches
         .into_iter()
+        .filter(|(_, score)| *score as f32 >= minimum_score)
         .filter_map(|(item, _score)| item.split_once('\t')?.0.parse().ok())
         .collect::<Vec<usize>>();
     indexes
