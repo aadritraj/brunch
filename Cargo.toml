@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 freedesktop-desktop-entry = "0.8.1"
 nucleo-matcher = "0.3.1"
-iced = { version = "0.14", features = ["image"] }
+iced = { version = "0.14", features = ["image", "svg"] }
 thiserror = "2"
 xdg = "3"

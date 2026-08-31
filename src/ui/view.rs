@@ -76,7 +76,10 @@ fn result_row<'a>(
     locales: &[String],
 ) -> Element<'a, Message> {
     let icon: Element<'_, Message> = match super::icons::handle(entry) {
-        Some(handle) => image(handle).width(36).height(36).into(),
+        Some(super::icons::Icon::Raster(handle)) => image(handle).width(36).height(36).into(),
+        Some(super::icons::Icon::Svg(handle)) => {
+            iced::widget::svg(handle).width(36).height(36).into()
+        }
         None => container(text("●").size(22).color(super::style::ACCENT))
             .width(36)
             .height(36)

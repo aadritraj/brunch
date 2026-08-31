@@ -3,21 +3,36 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use iced::widget::image::Handle;
+use iced::{
+    widget::image::Handle,
+    widget::{image, svg},
+};
 
 use crate::applications::DesktopEntry;
 
-pub fn handle(entry: &DesktopEntry) -> Option<Handle> {
-    icon_path(entry.icon()?).map(Handle::from_path)
+pub enum Icon {
+    Raster(Handle),
+    Svg(svg::Handle),
 }
 
-fn icon_path(icon: &str) -> Option<PathBuf> {
+pub fn handle(entry: &DesktopEntry) -> Option<Icon> {
+    let icon = entry.icon()?;
+    let path = icon_path(entry, icon)?;
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("svg") => Some(Icon::Svg(svg::Handle::from_path(path))),
+        Some("png" | "jpg" | "jpeg") => Some(Icon::Raster(image::Handle::from_path(path))),
+        _ => None,
+    }
+}
+
+fn icon_path(entry: &DesktopEntry, icon: &str) -> Option<PathBuf> {
     let icon = Path::new(icon);
     if icon.is_absolute() {
         return icon.is_file().then(|| icon.to_path_buf());
     }
 
-    find_icon_path(icon, data_roots())
+    let path = find_icon_path(icon, data_roots());
+    path.or_else(|| find_flatpak_icon_path(entry, icon))
 }
 
 fn data_roots() -> Vec<PathBuf> {
@@ -39,7 +54,7 @@ fn data_roots() -> Vec<PathBuf> {
 
 fn find_icon_path(icon: &Path, data_roots: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
     let mut icon_names = vec![icon.to_owned()];
-    if icon.extension().is_none() {
+    if !has_supported_extension(icon) {
         for extension in ["png", "svg", "jpg", "jpeg"] {
             icon_names.push(PathBuf::from(format!("{}.{extension}", icon.display())));
         }
@@ -67,6 +82,39 @@ fn find_icon_path(icon: &Path, data_roots: impl IntoIterator<Item = PathBuf>) ->
         }
     }
     None
+}
+
+fn find_flatpak_icon_path(entry: &DesktopEntry, icon: &Path) -> Option<PathBuf> {
+    let export_root = entry.path.parent()?.parent()?.parent()?;
+    if export_root.file_name().and_then(|name| name.to_str()) != Some("exports") {
+        return None;
+    }
+    let flatpak_root = export_root.parent()?;
+    if flatpak_root.file_name().and_then(|name| name.to_str()) != Some("flatpak") {
+        return None;
+    }
+
+    let files_root = flatpak_root.join("app").join(&entry.appid);
+    let mut deployments = Vec::new();
+    for architecture in directories(&files_root) {
+        for branch in directories(&architecture) {
+            let active = branch.join("active");
+            if active.is_dir() {
+                deployments.push(active.join("files/share"));
+            }
+        }
+    }
+    deployments.sort();
+    deployments
+        .into_iter()
+        .find_map(|root| find_icon_path(icon, [root]))
+}
+
+fn has_supported_extension(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("png" | "svg" | "jpg" | "jpeg" | "svgz")
+    )
 }
 
 fn directories(path: &Path) -> Vec<PathBuf> {
