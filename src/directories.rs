@@ -42,4 +42,8 @@ impl AppDirectories {
     pub fn data_dir(&self) -> &Path {
         &self.data
     }
+
+    pub fn history_path(&self) -> PathBuf {
+        self.data.join("history.json")
+    }
 }

@@ -4,24 +4,54 @@ use nucleo_matcher::{
     pattern::{AtomKind, CaseMatching, Normalization, Pattern},
 };
 
-use crate::applications::{DesktopEntry, DesktopEntryScanner};
+use crate::{applications::DesktopEntryScanner, history::History};
 
 const MATCH_CONFIDENCE: f32 = 0.80;
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SearchResult {
+    pub index: usize,
+    pub fuzzy_score: Option<u32>,
+    pub frecency: f64,
+}
 
-pub fn fuzzy_applications<'a>(
-    scanner: &'a DesktopEntryScanner,
+pub fn fuzzy_applications(
+    scanner: &DesktopEntryScanner,
     query: &str,
-) -> Vec<&'a DesktopEntry> {
+    history: &History,
+) -> Vec<SearchResult> {
     let locales = get_languages_from_env();
     if query.trim().is_empty() {
-        let mut entries = scanner.entries().iter().collect::<Vec<_>>();
-        entries.sort_by(|left, right| {
-            left.name(&locales)
-                .unwrap_or_default()
-                .cmp(&right.name(&locales).unwrap_or_default())
-                .then_with(|| left.appid.cmp(&right.appid))
+        let mut results = scanner
+            .entries()
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| SearchResult {
+                index,
+                fuzzy_score: None,
+                frecency: history.frecency(&entry.appid),
+            })
+            .collect::<Vec<_>>();
+        results.sort_by(|left, right| {
+            right
+                .frecency
+                .total_cmp(&left.frecency)
+                .then_with(|| {
+                    scanner.entries()[left.index]
+                        .name(&locales)
+                        .unwrap_or_default()
+                        .cmp(
+                            &scanner.entries()[right.index]
+                                .name(&locales)
+                                .unwrap_or_default(),
+                        )
+                })
+                .then_with(|| {
+                    scanner.entries()[left.index]
+                        .appid
+                        .cmp(&scanner.entries()[right.index].appid)
+                })
         });
-        return entries;
+        return results;
     }
 
     let haystacks = scanner
@@ -47,13 +77,35 @@ pub fn fuzzy_applications<'a>(
         .first()
         .map(|(_, score)| *score as f32 * MATCH_CONFIDENCE)
         .unwrap_or_default();
-    let indexes = matches
+    let mut results = matches
         .into_iter()
-        .filter(|(_, score)| *score as f32 >= minimum_score)
-        .filter_map(|(item, _score)| item.split_once('\t')?.0.parse().ok())
-        .collect::<Vec<usize>>();
-    indexes
-        .into_iter()
-        .filter_map(|index| scanner.entries().get(index))
-        .collect()
+        .filter(|(item, score)| {
+            if *score as f32 >= minimum_score {
+                return true;
+            }
+            let Some(index) = item
+                .split_once('\t')
+                .and_then(|(index, _)| index.parse::<usize>().ok())
+            else {
+                return false;
+            };
+            history.decayed_launches(&scanner.entries()[index].appid) > 0.0
+        })
+        .filter_map(|(item, score)| {
+            let index = item.split_once('\t')?.0.parse::<usize>().ok()?;
+            Some(SearchResult {
+                index,
+                fuzzy_score: Some(score),
+                frecency: history.frecency(&scanner.entries()[index].appid),
+            })
+        })
+        .collect::<Vec<_>>();
+    results.sort_by(|left, right| {
+        let left_score = left.fuzzy_score.unwrap_or_default() as f64;
+        let right_score = right.fuzzy_score.unwrap_or_default() as f64;
+        let left_boost = history.decayed_launches(&scanner.entries()[left.index].appid);
+        let right_boost = history.decayed_launches(&scanner.entries()[right.index].appid);
+        (right_score * (1.0 + right_boost)).total_cmp(&(left_score * (1.0 + left_boost)))
+    });
+    results
 }

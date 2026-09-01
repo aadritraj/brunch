@@ -7,6 +7,8 @@ use iced::{Element, Subscription, Task, keyboard, widget, window};
 
 use crate::{
     applications::{DesktopEntry, DesktopEntryScanner},
+    directories::AppDirectories,
+    history::History,
     launch::{ActionExecutor, DesktopEntryLaunch, SystemExecutor},
     search,
 };
@@ -33,11 +35,13 @@ pub struct Launcher {
     selected: usize,
     selection: Option<usize>,
     selection_error: Option<String>,
+    history: History,
     executor: SystemExecutor,
 }
 
 impl Launcher {
     fn new() -> (Self, Task<Message>) {
+        let directories = AppDirectories::initialize().ok();
         let mut launcher = Self {
             scanner: DesktopEntryScanner::discover(),
             query: String::new(),
@@ -45,6 +49,7 @@ impl Launcher {
             selected: 0,
             selection: None,
             selection_error: None,
+            history: History::load(directories.map(|directories| directories.history_path())),
             executor: SystemExecutor,
         };
         launcher.refresh_matches();
@@ -120,14 +125,9 @@ impl Launcher {
     }
 
     fn refresh_matches(&mut self) {
-        self.matches = search::fuzzy_applications(&self.scanner, &self.query)
+        self.matches = search::fuzzy_applications(&self.scanner, &self.query, &self.history)
             .into_iter()
-            .filter_map(|entry| {
-                self.scanner
-                    .entries()
-                    .iter()
-                    .position(|candidate| candidate.appid == entry.appid)
-            })
+            .map(|result| result.index)
             .collect();
         self.selected = self.selected.min(self.matches.len().saturating_sub(1));
         self.selection_error = None;
@@ -163,7 +163,13 @@ impl Launcher {
         };
         match DesktopEntryLaunch::from_entry(entry) {
             Ok(action) => match self.executor.execute(&action.into()) {
-                Ok(()) => true,
+                Ok(()) => {
+                    self.history.record_launch(&entry.appid);
+                    if let Err(error) = self.history.persist() {
+                        eprintln!("warning: could not persist launch history: {error}");
+                    }
+                    true
+                }
                 Err(error) => {
                     self.selection_error = Some(error.to_string());
                     false
