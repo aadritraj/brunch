@@ -5,9 +5,13 @@ use iced::{
 };
 
 use super::{Launcher, Message, RESULTS_ID, SEARCH_INPUT_ID};
+use crate::applications::DesktopAction;
 use crate::applications::DesktopEntry;
 
 pub fn render(launcher: &Launcher) -> Element<'_, Message> {
+    if launcher.mode == super::ViewMode::Actions {
+        return render_actions(launcher);
+    }
     let locales = get_languages_from_env();
     let search = text_input("Search applications…", &launcher.query)
         .id(iced::widget::Id::new(SEARCH_INPUT_ID))
@@ -98,7 +102,7 @@ fn result_row<'a>(
                     .size(13)
                     .color(super::style::MUTED)
             ]
-            .spacing(2)
+            .spacing(2),
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center),
@@ -109,4 +113,79 @@ fn result_row<'a>(
     .padding(10)
     .style(super::style::result_button(selected, failed))
     .into()
+}
+
+fn render_actions(launcher: &Launcher) -> Element<'_, Message> {
+    let Some(index) = launcher.matches.get(launcher.selected).copied() else {
+        return container(text("[Esc] to go back")).into();
+    };
+    let entry = &launcher.scanner.entries()[index];
+    let locales = get_languages_from_env();
+    let icon: Element<'_, Message> = match super::icons::handle(entry) {
+        Some(super::icons::Icon::Raster(handle)) => image(handle).width(48).height(48).into(),
+        Some(super::icons::Icon::Svg(handle)) => {
+            iced::widget::svg(handle).width(48).height(48).into()
+        }
+        None => container(text("●").size(28).color(super::style::ACCENT))
+            .width(48)
+            .height(48)
+            .center_x(48)
+            .center_y(48)
+            .into(),
+    };
+    let header = row![
+        icon,
+        column![
+            text(entry.name(&locales).unwrap_or_default().into_owned()).size(20),
+            text(entry.comment(&locales).unwrap_or_default().into_owned())
+                .size(13)
+                .color(super::style::MUTED),
+        ]
+        .spacing(2),
+    ]
+    .spacing(14)
+    .align_y(iced::Alignment::Center);
+    let actions = launcher
+        .actions
+        .iter()
+        .enumerate()
+        .map(|(position, action)| {
+            action_row(action, position, position == launcher.action_selected)
+        })
+        .collect::<Vec<_>>();
+    let error = launcher
+        .selection_error
+        .as_deref()
+        .map(|message| text(message).size(13).color(super::style::ERROR));
+    let mut body = column![
+        text("[Esc] to go back").size(13).color(super::style::MUTED),
+        header,
+        text("Actions").size(13).color(super::style::MUTED),
+        column(actions).spacing(super::style::GAP),
+    ]
+    .spacing(super::style::GAP)
+    .padding(super::style::PADDING);
+    if let Some(error) = error {
+        body = body.push(error);
+    }
+    container(
+        container(body)
+            .style(super::style::panel)
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .style(super::style::background)
+    .width(Fill)
+    .height(Fill)
+    .into()
+}
+
+fn action_row<'a>(action: &'a DesktopAction, index: usize, selected: bool) -> Element<'a, Message> {
+    button(text(action.name.clone()).size(16))
+        .on_press(Message::SelectAction(index))
+        .width(Fill)
+        .height(super::style::RESULT_ROW_HEIGHT)
+        .padding(10)
+        .style(super::style::result_button(selected, false))
+        .into()
 }

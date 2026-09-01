@@ -2,6 +2,31 @@ use std::{collections::HashMap, fs, path::PathBuf};
 
 pub use freedesktop_desktop_entry::DesktopEntry;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopAction {
+    pub id: String,
+    pub name: String,
+}
+
+pub fn actions_for_entry<L: AsRef<str>>(entry: &DesktopEntry, locales: &[L]) -> Vec<DesktopAction> {
+    entry
+        .actions()
+        .into_iter()
+        .flatten()
+        .filter_map(|id| {
+            let name = entry.action_name(id, locales)?;
+            let exec = entry.action_exec(id)?;
+            if name.trim().is_empty() || exec.trim().is_empty() {
+                return None;
+            }
+            Some(DesktopAction {
+                id: id.to_owned(),
+                name: name.into_owned(),
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct DesktopEntryScanner {
     entries: Vec<DesktopEntry>,

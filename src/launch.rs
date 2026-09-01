@@ -10,6 +10,7 @@ use thiserror::Error;
 #[derive(Debug, Clone)]
 pub enum LaunchAction {
     DesktopEntry(DesktopEntryLaunch),
+    DesktopAction(DesktopActionLaunch),
 }
 
 impl From<DesktopEntryLaunch> for LaunchAction {
@@ -18,9 +19,24 @@ impl From<DesktopEntryLaunch> for LaunchAction {
     }
 }
 
+impl From<DesktopActionLaunch> for LaunchAction {
+    fn from(action: DesktopActionLaunch) -> Self {
+        Self::DesktopAction(action)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DesktopEntryLaunch {
     pub appid: String,
+    pub args: Vec<String>,
+    pub working_directory: Option<PathBuf>,
+    pub terminal: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DesktopActionLaunch {
+    pub appid: String,
+    pub action_id: String,
     pub args: Vec<String>,
     pub working_directory: Option<PathBuf>,
     pub terminal: bool,
@@ -53,6 +69,22 @@ impl DesktopEntryLaunch {
     }
 }
 
+impl DesktopActionLaunch {
+    pub fn from_entry(entry: &DesktopEntry, action_id: &str) -> Result<Self, LaunchError> {
+        let appid = entry.id().to_owned();
+        let args = entry.parse_exec_action(action_id)?;
+        let working_directory = entry.path().map(PathBuf::from);
+
+        Ok(Self {
+            appid,
+            action_id: action_id.to_owned(),
+            args,
+            working_directory,
+            terminal: entry.terminal(),
+        })
+    }
+}
+
 pub trait ActionExecutor {
     fn execute(&self, action: &LaunchAction) -> Result<(), LaunchError>;
 }
@@ -63,34 +95,48 @@ pub struct SystemExecutor;
 impl ActionExecutor for SystemExecutor {
     fn execute(&self, action: &LaunchAction) -> Result<(), LaunchError> {
         match action {
-            LaunchAction::DesktopEntry(desktop_entry) => {
-                let (program, args) = desktop_entry
-                    .args
-                    .split_first()
-                    .ok_or(LaunchError::EmptyCommand)?;
-                let mut command = if desktop_entry.terminal {
-                    let terminal = resolve_terminal().ok_or(LaunchError::NoTerminal)?;
-                    let mut command = Command::new(terminal.executable);
-                    command.args(terminal.prefix);
-                    command.arg(program).args(args);
-                    command
-                } else {
-                    let mut command = Command::new(program);
-                    command.args(args);
-                    command
-                };
-                command
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null());
-                // gnome-terminal does not respect this! they opt to have a --working-directory flag instead
-                // i will not bother.
-                if let Some(path) = &desktop_entry.working_directory {
-                    command.current_dir(path);
-                }
-                command.spawn().map(|_| ()).map_err(LaunchError::from)
-            }
+            LaunchAction::DesktopEntry(desktop_entry) => Self::spawn(
+                &desktop_entry.args,
+                desktop_entry.working_directory.as_deref(),
+                desktop_entry.terminal,
+            ),
+            LaunchAction::DesktopAction(desktop_action) => Self::spawn(
+                &desktop_action.args,
+                desktop_action.working_directory.as_deref(),
+                desktop_action.terminal,
+            ),
         }
+    }
+}
+
+impl SystemExecutor {
+    fn spawn(
+        args: &[String],
+        working_directory: Option<&Path>,
+        terminal: bool,
+    ) -> Result<(), LaunchError> {
+        let (program, args) = args.split_first().ok_or(LaunchError::EmptyCommand)?;
+        let mut command = if terminal {
+            let terminal = resolve_terminal().ok_or(LaunchError::NoTerminal)?;
+            let mut command = Command::new(terminal.executable);
+            command.args(terminal.prefix);
+            command.arg(program).args(args);
+            command
+        } else {
+            let mut command = Command::new(program);
+            command.args(args);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // gnome-terminal does not respect this! they opt to have a --working-directory flag instead
+        // i will not bother.
+        if let Some(path) = working_directory {
+            command.current_dir(path);
+        }
+        command.spawn().map(|_| ()).map_err(LaunchError::from)
     }
 }
 

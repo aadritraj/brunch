@@ -77,7 +77,7 @@ pub fn fuzzy_applications(
         .first()
         .map(|(_, score)| *score as f32 * MATCH_CONFIDENCE)
         .unwrap_or_default();
-    
+
     let mut results = matches
         .into_iter()
         .filter(|(_, score)| *score as f32 >= minimum_score)
