@@ -77,20 +77,10 @@ pub fn fuzzy_applications(
         .first()
         .map(|(_, score)| *score as f32 * MATCH_CONFIDENCE)
         .unwrap_or_default();
+    
     let mut results = matches
         .into_iter()
-        .filter(|(item, score)| {
-            if *score as f32 >= minimum_score {
-                return true;
-            }
-            let Some(index) = item
-                .split_once('\t')
-                .and_then(|(index, _)| index.parse::<usize>().ok())
-            else {
-                return false;
-            };
-            history.decayed_launches(&scanner.entries()[index].appid) > 0.0
-        })
+        .filter(|(_, score)| *score as f32 >= minimum_score)
         .filter_map(|(item, score)| {
             let index = item.split_once('\t')?.0.parse::<usize>().ok()?;
             Some(SearchResult {
