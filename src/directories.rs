@@ -39,6 +39,10 @@ impl AppDirectories {
         &self.config
     }
 
+    pub fn config_path(&self) -> PathBuf {
+        self.config.join("config.toml")
+    }
+
     pub fn data_dir(&self) -> &Path {
         &self.data
     }

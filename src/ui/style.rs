@@ -1,73 +1,62 @@
+use crate::userconfig::Style;
 use iced::{
     Background, Border, Color, Theme,
     border::Radius,
     widget::{button, container, text_input},
 };
 
-// move to a config file to allow user customi(s)(z)ation
-pub const BACKGROUND: Color = Color::from_rgb(0.10, 0.11, 0.13);
-pub const SURFACE: Color = Color::from_rgb(0.14, 0.15, 0.18);
-pub const SURFACE_SELECTED: Color = Color::from_rgb(0.22, 0.24, 0.29);
-pub const TEXT: Color = Color::from_rgb(0.93, 0.94, 0.96);
-pub const MUTED: Color = Color::from_rgb(0.62, 0.65, 0.70);
-pub const ACCENT: Color = Color::from_rgb(0.45, 0.66, 0.95);
-pub const ERROR: Color = Color::from_rgb(0.95, 0.38, 0.38);
-pub const SURFACE_ERROR: Color = Color::from_rgb(0.34, 0.16, 0.18);
-pub const RADIUS: f32 = 12.0;
-pub const RESULT_ROW_HEIGHT: f32 = 56.0;
-pub const PADDING: u16 = 20;
-pub const GAP: f32 = 10.0;
-
-pub fn background(_theme: &Theme) -> container::Style {
+pub fn background(style: &Style, _theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(BACKGROUND)),
-        text_color: Some(TEXT),
+        background: Some(Background::Color(style.background)),
+        text_color: Some(style.text),
         ..Default::default()
     }
 }
-
-pub fn panel(_theme: &Theme) -> container::Style {
+pub fn panel(style: &Style, _theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(SURFACE)),
+        background: Some(Background::Color(style.surface)),
         border: Border {
-            radius: Radius::new(RADIUS),
+            radius: Radius::new(style.radius),
             ..Default::default()
         },
         ..Default::default()
     }
 }
-
-pub fn search_input(_theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let mut style = text_input::default(_theme, status);
-    style.background = Background::Color(SURFACE);
-    style.border.radius = Radius::new(RADIUS);
-    style.border.color = ACCENT;
-    style.border.width = 1.0;
-    style.icon = MUTED;
-    style.placeholder = MUTED;
-    style.value = TEXT;
-    style.selection = ACCENT;
-    style
+pub fn search_input(style: &Style, theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let mut result = text_input::default(theme, status);
+    result.background = Background::Color(style.surface);
+    result.border.radius = Radius::new(style.radius);
+    result.border.color = style.accent;
+    result.border.width = 1.0;
+    result.icon = style.muted;
+    result.placeholder = style.muted;
+    result.value = style.text;
+    result.selection = style.accent;
+    result
 }
-
 pub fn result_button(
+    style: &Style,
     selected: bool,
     failed: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
+    let surface = style.surface;
+    let selected_surface = style.surface_selected;
+    let error_surface = style.surface_error;
+    let text = style.text;
+    let radius = style.radius;
     move |_theme, status| {
         let highlighted = selected || matches!(status, button::Status::Hovered);
-
         button::Style {
             background: Some(Background::Color(if failed {
-                SURFACE_ERROR
+                error_surface
             } else if highlighted {
-                SURFACE_SELECTED
+                selected_surface
             } else {
-                SURFACE
+                surface
             })),
-            text_color: TEXT,
+            text_color: text,
             border: Border {
-                radius: Radius::new(RADIUS),
+                radius: Radius::new(radius),
                 ..Default::default()
             },
             shadow: if matches!(status, button::Status::Hovered) {

@@ -12,11 +12,11 @@ use crate::{
     history::History,
     launch::{ActionExecutor, DesktopActionLaunch, DesktopEntryLaunch, SystemExecutor},
     search,
+    userconfig::Style,
 };
 
 pub const SEARCH_INPUT_ID: &str = "launcher-search";
 pub const RESULTS_ID: &str = "launcher-results";
-const RESULT_ROW_STEP: f32 = style::RESULT_ROW_HEIGHT + style::GAP;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -49,11 +49,36 @@ pub struct Launcher {
     action_selected: usize,
     history: History,
     executor: SystemExecutor,
+    style: crate::userconfig::Style,
 }
 
 impl Launcher {
     fn new() -> (Self, Task<Message>) {
         let directories = AppDirectories::initialize().ok();
+        if let Some(directories) = &directories {
+            if let Err(error) =
+                crate::userconfig::UserConfig::write_defaults(&directories.config_path())
+            {
+                eprintln!("warning: {error}");
+            }
+        }
+        let style = directories
+            .as_ref()
+            .map(
+                |d| match crate::userconfig::UserConfig::load(&d.config_path()) {
+                    Ok(config) => config.style,
+                    Err(crate::userconfig::ConfigError::Read(error))
+                        if error.kind() == std::io::ErrorKind::NotFound =>
+                    {
+                        Style::default()
+                    }
+                    Err(error) => {
+                        eprintln!("warning: {error}; using default style");
+                        Style::default()
+                    }
+                },
+            )
+            .unwrap_or_default();
         let mut launcher = Self {
             scanner: DesktopEntryScanner::discover(),
             query: String::new(),
@@ -66,6 +91,7 @@ impl Launcher {
             action_selected: 0,
             history: History::load(directories.map(|directories| directories.history_path())),
             executor: SystemExecutor,
+            style,
         };
         launcher.refresh_matches();
         (
@@ -221,7 +247,7 @@ impl Launcher {
         if self.selected == previous {
             return Task::none();
         }
-        let offset = self.selected as f32 * RESULT_ROW_STEP;
+        let offset = self.selected as f32 * (self.style.result_row_height + self.style.gap);
         widget::operation::scroll_to(
             widget::Id::new(RESULTS_ID),
             widget::operation::AbsoluteOffset { x: 0.0, y: offset },

@@ -4,3 +4,4 @@ pub mod history;
 pub mod launch;
 pub mod search;
 pub mod ui;
+pub mod userconfig;
