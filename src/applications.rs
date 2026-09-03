@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::os::unix::fs::PermissionsExt;
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 pub use freedesktop_desktop_entry::DesktopEntry;
 
@@ -64,7 +69,11 @@ impl DesktopEntryScanner {
                 let Ok(entry) = DesktopEntry::from_path(&path, None::<&[&str]>) else {
                     continue;
                 };
-                if entry.type_() != Some("Application") || entry.hidden() || entry.no_display() {
+                if entry.type_() != Some("Application")
+                    || entry.hidden()
+                    || entry.no_display()
+                    || !should_show_entry(&entry)
+                {
                     continue;
                 }
                 seen.insert(id.to_owned(), entries.len());
@@ -106,4 +115,52 @@ impl DesktopEntryScanner {
             })
             .collect()
     }
+}
+
+fn should_show_entry(entry: &DesktopEntry) -> bool {
+    let desktops = freedesktop_desktop_entry::current_desktop().unwrap_or_default();
+
+    if let Some(only_show_in) = entry.only_show_in()
+        && !only_show_in.iter().any(|desktop| {
+            desktops
+                .iter()
+                .any(|current| current.eq_ignore_ascii_case(desktop))
+        })
+    {
+        return false;
+    }
+
+    if entry.not_show_in().is_some_and(|not_show_in| {
+        not_show_in.iter().any(|desktop| {
+            desktops
+                .iter()
+                .any(|current| current.eq_ignore_ascii_case(desktop))
+        })
+    }) {
+        return false;
+    }
+
+    entry.try_exec().is_none_or(is_executable)
+}
+
+fn is_executable(command: &str) -> bool {
+    let path = Path::new(command);
+    if path.is_absolute() || command.contains('/') {
+        return is_executable_file(path);
+    }
+
+    env::var_os("PATH").is_some_and(|path_var| {
+        env::split_paths(&path_var).any(|directory| is_executable_file(&directory.join(command)))
+    })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+
+    metadata.permissions().mode() & 0o111 != 0
 }
