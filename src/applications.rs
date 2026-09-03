@@ -49,6 +49,10 @@ impl DesktopEntryScanner {
     {
         let mut seen = HashMap::new();
         let mut entries = Vec::new();
+        let desktops = freedesktop_desktop_entry::current_desktop().unwrap_or_default();
+        let path_dirs: Vec<PathBuf> = env::var_os("PATH")
+            .map(|v| env::split_paths(&v).collect())
+            .unwrap_or_default();
 
         for directory in directories.into_iter().map(Into::into) {
             let Ok(files) = fs::read_dir(directory) else {
@@ -72,7 +76,7 @@ impl DesktopEntryScanner {
                 if entry.type_() != Some("Application")
                     || entry.hidden()
                     || entry.no_display()
-                    || !should_show_entry(&entry)
+                    || !should_show_entry(&entry, &desktops, &path_dirs)
                 {
                     continue;
                 }
@@ -117,41 +121,75 @@ impl DesktopEntryScanner {
     }
 }
 
-fn should_show_entry(entry: &DesktopEntry) -> bool {
-    let desktops = freedesktop_desktop_entry::current_desktop().unwrap_or_default();
+fn should_show_entry(entry: &DesktopEntry, desktops: &[String], path_dirs: &[PathBuf]) -> bool {
+    if !desktops.is_empty()
+        && let Some(only_show_in) = entry.only_show_in()
+        && !only_show_in
+            .iter()
+            .filter(|desktop| !desktop.is_empty())
+            .any(|desktop| {
+                desktops
+                    .iter()
+                    .any(|current| current.eq_ignore_ascii_case(desktop))
+            })
+    {
+        return false;
+    }
 
-    if let Some(only_show_in) = entry.only_show_in()
-        && !only_show_in.iter().any(|desktop| {
-            desktops
+    if !desktops.is_empty()
+        && entry.not_show_in().is_some_and(|not_show_in| {
+            not_show_in
                 .iter()
-                .any(|current| current.eq_ignore_ascii_case(desktop))
+                .filter(|desktop| !desktop.is_empty())
+                .any(|desktop| {
+                    desktops
+                        .iter()
+                        .any(|current| current.eq_ignore_ascii_case(desktop))
+                })
         })
     {
         return false;
     }
 
-    if entry.not_show_in().is_some_and(|not_show_in| {
-        not_show_in.iter().any(|desktop| {
-            desktops
-                .iter()
-                .any(|current| current.eq_ignore_ascii_case(desktop))
-        })
-    }) {
+    entry
+        .try_exec()
+        .is_none_or(|command| is_executable(command, path_dirs))
+}
+
+fn is_executable(command: &str, path_dirs: &[PathBuf]) -> bool {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
         return false;
     }
 
-    entry.try_exec().is_none_or(is_executable)
-}
+    let exe = if trimmed.starts_with('"') || trimmed.starts_with('\'') {
+        let quote = trimmed.as_bytes()[0] as char;
+        trimmed[1..]
+            .find(quote)
+            .map(|end| trimmed[1..][..end].trim())
+    } else {
+        None
+    }
+    .unwrap_or_else(|| {
+        trimmed
+            .split_ascii_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim_matches(|c| c == '"' || c == '\'')
+    });
 
-fn is_executable(command: &str) -> bool {
-    let path = Path::new(command);
-    if path.is_absolute() || command.contains('/') {
+    if exe.is_empty() {
+        return false;
+    }
+
+    let path = Path::new(exe);
+    if path.is_absolute() || exe.contains('/') {
         return is_executable_file(path);
     }
 
-    env::var_os("PATH").is_some_and(|path_var| {
-        env::split_paths(&path_var).any(|directory| is_executable_file(&directory.join(command)))
-    })
+    path_dirs
+        .iter()
+        .any(|directory| is_executable_file(&directory.join(exe)))
 }
 
 fn is_executable_file(path: &Path) -> bool {
