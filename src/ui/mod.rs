@@ -12,7 +12,6 @@ use crate::{
     history::History,
     launch::{ActionExecutor, DesktopActionLaunch, DesktopEntryLaunch, SystemExecutor},
     search,
-    userconfig::Style,
 };
 
 pub const SEARCH_INPUT_ID: &str = "launcher-search";
@@ -50,6 +49,9 @@ pub struct Launcher {
     action_selected: usize,
     history: History,
     executor: SystemExecutor,
+    // TODO Remove when config has been implemented
+    #[allow(dead_code)]
+    config: crate::userconfig::Config,
     style: crate::userconfig::Style,
 }
 
@@ -57,28 +59,16 @@ impl Launcher {
     fn new() -> (Self, Task<Message>) {
         let directories = AppDirectories::initialize().ok();
         if let Some(directories) = &directories {
-            if let Err(error) =
-                crate::userconfig::UserConfig::write_defaults(&directories.config_path())
-            {
+            if let Err(error) = crate::userconfig::UserConfig::write_defaults(
+                &directories.config_path(),
+                &directories.style_path(),
+            ) {
                 eprintln!("warning: {error}");
             }
         }
-        let style = directories
+        let config = directories
             .as_ref()
-            .map(
-                |d| match crate::userconfig::UserConfig::load(&d.config_path()) {
-                    Ok(config) => config.style,
-                    Err(crate::userconfig::ConfigError::Read(error))
-                        if error.kind() == std::io::ErrorKind::NotFound =>
-                    {
-                        Style::default()
-                    }
-                    Err(error) => {
-                        eprintln!("warning: {error}; using default style");
-                        Style::default()
-                    }
-                },
-            )
+            .map(|d| crate::userconfig::UserConfig::load(&d.config_path(), &d.style_path()))
             .unwrap_or_default();
         let mut launcher = Self {
             scanner: DesktopEntryScanner::discover(),
@@ -92,7 +82,8 @@ impl Launcher {
             action_selected: 0,
             history: History::load(directories.map(|directories| directories.history_path())),
             executor: SystemExecutor,
-            style,
+            config: config.config,
+            style: config.style,
         };
         launcher.refresh_matches();
         (
@@ -355,9 +346,11 @@ pub fn run() -> iced_layershell::Result {
     iced_layershell::application(Launcher::new, "brunch", Launcher::update, Launcher::view)
         .settings(settings)
         .subscription(Launcher::subscription)
-        .style(|_state, theme| iced_layershell::reexport::core::theme::Style {
-            background_color: iced::Color::TRANSPARENT,
-            text_color: theme.palette().text,
-        })
+        .style(
+            |_state, theme| iced_layershell::reexport::core::theme::Style {
+                background_color: iced::Color::TRANSPARENT,
+                text_color: theme.palette().text,
+            },
+        )
         .run()
 }
