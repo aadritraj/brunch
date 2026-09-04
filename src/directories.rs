@@ -40,7 +40,11 @@ impl AppDirectories {
     }
 
     pub fn config_path(&self) -> PathBuf {
-        self.config.join("config.toml")
+        self.config.join("config.ron")
+    }
+
+    pub fn style_path(&self) -> PathBuf {
+        self.config.join("style.ron")
     }
 
     pub fn data_dir(&self) -> &Path {

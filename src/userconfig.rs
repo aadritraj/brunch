@@ -1,55 +1,46 @@
-use std::{fs, path::Path};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use iced::Color;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("could not read config file: {0}")]
-    Read(#[source] std::io::Error),
-    #[error("could not write config file: {0}")]
-    Write(#[source] std::io::Error),
-    #[error("could not parse config file: {0}")]
-    Parse(#[source] toml::de::Error),
-    #[error("invalid style property: {0}")]
-    InvalidStyle(String),
+    #[error("could not read {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("could not write {path}: {source}")]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("could not parse {path}: {source}")]
+    Parse {
+        path: PathBuf,
+        #[source]
+        source: ron::error::SpannedError,
+    },
+    #[error("invalid style property {property}: {reason}")]
+    InvalidStyle {
+        property: &'static str,
+        reason: String,
+    },
 }
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct Config {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct UserConfig {
+    pub config: Config,
     pub style: Style,
-}
-
-impl Default for UserConfig {
-    fn default() -> Self {
-        Self {
-            style: Style::default(),
-        }
-    }
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct RawUserConfig {
-    style: StyleOverrides,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-pub struct StyleOverrides {
-    pub background: Option<String>,
-    pub surface: Option<String>,
-    pub surface_selected: Option<String>,
-    pub text: Option<String>,
-    pub muted: Option<String>,
-    pub accent: Option<String>,
-    pub error: Option<String>,
-    pub surface_error: Option<String>,
-    pub radius: Option<f32>,
-    pub result_row_height: Option<f32>,
-    pub padding: Option<u16>,
-    pub gap: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -68,14 +59,17 @@ pub struct Style {
     pub gap: f32,
 }
 
+impl Default for UserConfig {
+    fn default() -> Self {
+        Self {
+            config: Config::default(),
+            style: Style::default(),
+        }
+    }
+}
+
 impl Default for Style {
     fn default() -> Self {
-        /*
-        default values for styling, is used if config failed to load or parse
-        also serialised into toml for the user config by default
-        so technically changing this is a breaking change for old users
-        but, i would argue that retaining what the user was used to is more important than new defaults
-        */
         Self {
             background: Color::from_rgb(0.10, 0.11, 0.13),
             surface: Color::from_rgb(0.14, 0.15, 0.18),
@@ -93,38 +87,25 @@ impl Default for Style {
     }
 }
 
-impl UserConfig {
-    pub fn write_defaults(path: &Path) -> Result<(), ConfigError> {
-        use std::io::Write;
-        let mut file = match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-        {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
-            Err(error) => return Err(ConfigError::Write(error)),
-        };
-        file.write_all(default_config().as_bytes())
-            .map_err(ConfigError::Write)
-    }
-
-    pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let source = fs::read_to_string(path).map_err(ConfigError::Read)?;
-        let config: RawUserConfig = toml::from_str(&source).map_err(ConfigError::Parse)?;
-        Ok(Self {
-            style: config.style.resolve()?,
-        })
-    }
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct StyleFile {
+    background: Option<String>,
+    surface: Option<String>,
+    surface_selected: Option<String>,
+    text: Option<String>,
+    muted: Option<String>,
+    accent: Option<String>,
+    error: Option<String>,
+    surface_error: Option<String>,
+    radius: Option<f32>,
+    result_row_height: Option<f32>,
+    padding: Option<u16>,
+    gap: Option<f32>,
 }
 
-#[derive(Serialize)]
-struct DefaultConfig {
-    style: DefaultStyle,
-}
-
-#[derive(Serialize)]
-struct DefaultStyle {
+#[derive(Debug, Serialize)]
+struct StyleDefaults {
     background: String,
     surface: String,
     surface_selected: String,
@@ -139,29 +120,181 @@ struct DefaultStyle {
     gap: f32,
 }
 
-fn default_config() -> String {
-    let style = UserConfig::default().style;
-    toml::to_string_pretty(&DefaultConfig {
-        style: DefaultStyle {
-            background: color_hex(style.background),
-            surface: color_hex(style.surface),
-            surface_selected: color_hex(style.surface_selected),
-            text: color_hex(style.text),
-            muted: color_hex(style.muted),
-            accent: color_hex(style.accent),
-            error: color_hex(style.error),
-            surface_error: color_hex(style.surface_error),
+impl UserConfig {
+    pub fn load(config_path: &Path, style_path: &Path) -> Self {
+        let config = match load_ron(config_path) {
+            Ok(Some(config)) => config,
+            Ok(None) => Config::default(),
+            Err(error) => {
+                eprintln!("warning: {error}; using default config");
+                Config::default()
+            }
+        };
+        let style = match load_style(style_path) {
+            Ok(style) => style,
+            Err(error) => {
+                eprintln!("warning: {error}; using default style");
+                Style::default()
+            }
+        };
+        Self { config, style }
+    }
+
+    pub fn write_defaults(config_path: &Path, style_path: &Path) -> Result<(), ConfigError> {
+        create_default(config_path, &Config::default())?;
+        create_default(style_path, &StyleDefaults::from(Style::default()))
+    }
+}
+
+fn load_ron<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, ConfigError> {
+    let source = match fs::read_to_string(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_owned(),
+                source,
+            });
+        }
+    };
+    if source.trim().is_empty() {
+        return Ok(None);
+    }
+    ron::from_str(&source)
+        .map(Some)
+        .map_err(|source| ConfigError::Parse {
+            path: path.to_owned(),
+            source,
+        })
+}
+
+fn load_style(path: &Path) -> Result<Style, ConfigError> {
+    let options =
+        ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Style::default()),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_owned(),
+                source,
+            });
+        }
+    };
+    if source.trim().is_empty() {
+        return Ok(Style::default());
+    }
+    let file: StyleFile = options
+        .from_str(&source)
+        .map_err(|source| ConfigError::Parse {
+            path: path.to_owned(),
+            source,
+        })?;
+    file.resolve()
+}
+
+fn create_default<T: Serialize>(path: &Path, value: &T) -> Result<(), ConfigError> {
+    let text = ron::ser::to_string_pretty(value, ron::ser::PrettyConfig::new())
+        .expect("defaults serialize");
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            io::Write::write_all(&mut file, text.as_bytes()).map_err(|source| ConfigError::Write {
+                path: path.to_owned(),
+                source,
+            })
+        }
+        Err(source) if source.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(source) => Err(ConfigError::Write {
+            path: path.to_owned(),
+            source,
+        }),
+    }
+}
+
+impl StyleFile {
+    fn resolve(self) -> Result<Style, ConfigError> {
+        let mut style = Style::default();
+        apply_color(
+            &mut style.background,
+            "background",
+            self.background.as_deref(),
+        )?;
+        apply_color(&mut style.surface, "surface", self.surface.as_deref())?;
+        apply_color(
+            &mut style.surface_selected,
+            "surface_selected",
+            self.surface_selected.as_deref(),
+        )?;
+        apply_color(&mut style.text, "text", self.text.as_deref())?;
+        apply_color(&mut style.muted, "muted", self.muted.as_deref())?;
+        apply_color(&mut style.accent, "accent", self.accent.as_deref())?;
+        apply_color(&mut style.error, "error", self.error.as_deref())?;
+        apply_color(
+            &mut style.surface_error,
+            "surface_error",
+            self.surface_error.as_deref(),
+        )?;
+        for (name, value, target) in [
+            ("radius", self.radius, &mut style.radius),
+            (
+                "result_row_height",
+                self.result_row_height,
+                &mut style.result_row_height,
+            ),
+            ("gap", self.gap, &mut style.gap),
+        ] {
+            if let Some(value) = value {
+                if !value.is_finite() || value < 0.0 {
+                    return Err(ConfigError::InvalidStyle {
+                        property: name,
+                        reason: "must be finite and non-negative".into(),
+                    });
+                }
+                *target = value;
+            }
+        }
+        if let Some(value) = self.padding {
+            style.padding = value;
+        }
+        Ok(style)
+    }
+}
+
+fn apply_color(
+    target: &mut Color,
+    property: &'static str,
+    value: Option<&str>,
+) -> Result<(), ConfigError> {
+    if let Some(value) = value {
+        *target = parse_color(property, value)?;
+    }
+    Ok(())
+}
+
+impl From<Style> for StyleDefaults {
+    fn from(style: Style) -> Self {
+        Self {
+            background: hex(style.background),
+            surface: hex(style.surface),
+            surface_selected: hex(style.surface_selected),
+            text: hex(style.text),
+            muted: hex(style.muted),
+            accent: hex(style.accent),
+            error: hex(style.error),
+            surface_error: hex(style.surface_error),
             radius: style.radius,
             result_row_height: style.result_row_height,
             padding: style.padding,
             gap: style.gap,
-        },
-    })
-    .expect("default config should always serialize")
+        }
+    }
 }
 
-fn color_hex(color: Color) -> String {
-    // stinky
+fn hex(color: Color) -> String {
     format!(
         "#{:02x}{:02x}{:02x}{:02x}",
         (color.r * 255.0).round() as u8,
@@ -171,76 +304,32 @@ fn color_hex(color: Color) -> String {
     )
 }
 
-impl StyleOverrides {
-    fn resolve(&self) -> Result<Style, ConfigError> {
-        let mut style = Style::default();
-        for (target, value) in [
-            (&mut style.background, &self.background),
-            (&mut style.surface, &self.surface),
-            (&mut style.surface_selected, &self.surface_selected),
-            (&mut style.text, &self.text),
-            (&mut style.muted, &self.muted),
-            (&mut style.accent, &self.accent),
-            (&mut style.error, &self.error),
-            (&mut style.surface_error, &self.surface_error),
-        ] {
-            if let Some(value) = value {
-                *target = parse_color(value)?;
-            }
-        }
-        if let Some(value) = self.radius {
-            validate_nonnegative("radius", value)?;
-            style.radius = value;
-        }
-        if let Some(value) = self.result_row_height {
-            validate_nonnegative("result_row_height", value)?;
-            style.result_row_height = value;
-        }
-        if let Some(value) = self.padding {
-            style.padding = value;
-        }
-        if let Some(value) = self.gap {
-            validate_nonnegative("gap", value)?;
-            style.gap = value;
-        }
-        Ok(style)
-    }
-}
-
-fn validate_nonnegative(name: &str, value: f32) -> Result<(), ConfigError> {
-    if value.is_finite() && value >= 0.0 {
-        Ok(())
-    } else {
-        Err(ConfigError::InvalidStyle(format!(
-            "{name} must be finite and non-negative"
-        )))
-    }
-}
-
-fn parse_color(value: &str) -> Result<Color, ConfigError> {
-    let hex = value.strip_prefix('#').unwrap_or(value);
-    let (hex, alpha) = match hex.len() {
-        3 => (hex.chars().flat_map(|c| [c, c]).collect::<String>(), 255),
-        6 => (hex.to_owned(), 255),
-        8 => (
-            hex[..6].to_owned(),
-            u8::from_str_radix(&hex[6..], 16)
-                .map_err(|_| ConfigError::InvalidStyle(format!("invalid color {value:?}")))?,
-        ),
-        _ => {
-            return Err(ConfigError::InvalidStyle(format!(
-                "invalid color {value:?}"
-            )));
-        }
+fn parse_color(property: &'static str, value: &str) -> Result<Color, ConfigError> {
+    let value = value.trim().trim_start_matches('#');
+    let expanded = match value.len() {
+        3 => value.chars().flat_map(|c| [c, c]).collect::<String>(),
+        6 | 8 => value.to_owned(),
+        _ => return Err(invalid_color(property, value)),
     };
-    let component = |start| {
-        u8::from_str_radix(&hex[start..start + 2], 16)
-            .map_err(|_| ConfigError::InvalidStyle(format!("invalid color {value:?}")))
+    let alpha = if expanded.len() == 8 {
+        byte(property, &expanded[6..])?
+    } else {
+        255
     };
     Ok(Color::from_rgba8(
-        component(0)?,
-        component(2)?,
-        component(4)?,
-        alpha as u8 as f32 / 255.0,
+        byte(property, &expanded[0..2])?,
+        byte(property, &expanded[2..4])?,
+        byte(property, &expanded[4..6])?,
+        f32::from(alpha) / 255.0,
     ))
+}
+
+fn byte(property: &'static str, value: &str) -> Result<u8, ConfigError> {
+    u8::from_str_radix(value, 16).map_err(|_| invalid_color(property, value))
+}
+fn invalid_color(property: &'static str, value: &str) -> ConfigError {
+    ConfigError::InvalidStyle {
+        property,
+        reason: format!("invalid hex color {value:?}"),
+    }
 }
