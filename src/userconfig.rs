@@ -25,7 +25,7 @@ pub enum ConfigError {
     Parse {
         path: PathBuf,
         #[source]
-        source: ron::error::SpannedError,
+        source: Box<ron::error::SpannedError>,
     },
     #[error("invalid style property {property}: {reason}")]
     InvalidStyle {
@@ -37,7 +37,7 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Config {}
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct UserConfig {
     pub config: Config,
     pub style: Style,
@@ -57,15 +57,6 @@ pub struct Style {
     pub result_row_height: f32,
     pub padding: u16,
     pub gap: f32,
-}
-
-impl Default for UserConfig {
-    fn default() -> Self {
-        Self {
-            config: Config::default(),
-            style: Style::default(),
-        }
-    }
 }
 
 impl Default for Style {
@@ -164,7 +155,7 @@ fn load_ron<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, ConfigError> 
         .map(Some)
         .map_err(|source| ConfigError::Parse {
             path: path.to_owned(),
-            source,
+            source: Box::new(source),
         })
 }
 
@@ -188,7 +179,7 @@ fn load_style(path: &Path) -> Result<Style, ConfigError> {
         .from_str(&source)
         .map_err(|source| ConfigError::Parse {
             path: path.to_owned(),
-            source,
+            source: Box::new(source),
         })?;
     file.resolve()
 }

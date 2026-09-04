@@ -58,13 +58,13 @@ pub struct Launcher {
 impl Launcher {
     fn new() -> (Self, Task<Message>) {
         let directories = AppDirectories::initialize().ok();
-        if let Some(directories) = &directories {
-            if let Err(error) = crate::userconfig::UserConfig::write_defaults(
+        if let Some(directories) = &directories
+            && let Err(error) = crate::userconfig::UserConfig::write_defaults(
                 &directories.config_path(),
                 &directories.style_path(),
-            ) {
-                eprintln!("warning: {error}");
-            }
+            )
+        {
+            eprintln!("warning: {error}");
         }
         let config = directories
             .as_ref()
@@ -131,10 +131,10 @@ impl Launcher {
                     return iced::exit();
                 }
             }
-            Message::SelectAction(index) => {
-                if self.mode == ViewMode::Actions && self.select_action(index) {
-                    return iced::exit();
-                }
+            Message::SelectAction(index)
+                if self.mode == ViewMode::Actions && self.select_action(index) =>
+            {
+                return iced::exit();
             }
             Message::OpenActions => self.open_actions(),
             Message::Dismiss => return iced::exit(),
@@ -177,10 +177,8 @@ impl Launcher {
                     }
                 }
             },
-            Message::KeyPressed(Key::Named(Named::Tab)) => {
-                if self.mode == ViewMode::Applications {
-                    self.open_actions();
-                }
+            Message::KeyPressed(Key::Named(Named::Tab)) if self.mode == ViewMode::Applications => {
+                self.open_actions();
             }
             Message::KeyPressed(Key::Named(Named::Escape)) => {
                 if self.mode == ViewMode::Actions {

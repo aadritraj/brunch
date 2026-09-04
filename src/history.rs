@@ -135,9 +135,7 @@ fn frecency_at(launches: &[i64]) -> f64 {
             let age_days = (reference - *launch).max(0) as f64 / SECONDS_PER_DAY;
             (-LAMBDA * age_days).exp()
         })
-        .sum::<f64>()
-        / launches.len() as f64
-        * launches.len() as f64;
+        .sum::<f64>();
     reference as f64 / SECONDS_PER_DAY + score.ln() / LAMBDA
 }
 
