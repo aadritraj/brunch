@@ -18,6 +18,7 @@ use crate::{
 pub const SEARCH_INPUT_ID: &str = "launcher-search";
 pub const RESULTS_ID: &str = "launcher-results";
 
+#[iced_layershell::to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
     QueryChanged(String),
@@ -199,6 +200,7 @@ impl Launcher {
                 }
             }
             Message::KeyPressed(_) => {}
+            _ => {}
         }
         Task::none()
     }
@@ -208,16 +210,13 @@ impl Launcher {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch([
-            window::events().map(|(_, event)| Message::WindowEvent(event)),
-            iced::event::listen_with(|event, _status, _window| {
-                if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
-                    Some(Message::KeyPressed(key))
-                } else {
-                    None
-                }
-            }),
-        ])
+        iced::event::listen_with(|event, _status, _window| match event {
+            iced::Event::Window(event) => Some(Message::WindowEvent(event)),
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
+                Some(Message::KeyPressed(key))
+            }
+            _ => None,
+        })
     }
 
     pub fn selected(&self) -> Option<&DesktopEntry> {
@@ -335,14 +334,30 @@ impl Launcher {
     }
 }
 
-pub fn run() -> Result<(), iced::Error> {
-    iced::application(Launcher::new, Launcher::update, Launcher::view)
-        .title("Brunch")
+pub fn run() -> iced_layershell::Result {
+    use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
+    use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
+
+    let settings = Settings {
+        layer_settings: LayerShellSettings {
+            size: Some((760, 520)),
+            exclusive_zone: -1,
+            anchor: Anchor::empty(),
+            layer: Layer::Overlay,
+            margin: (0, 0, 0, 0),
+            keyboard_interactivity: KeyboardInteractivity::Exclusive,
+            start_mode: StartMode::Active,
+            events_transparent: false,
+        },
+        ..Default::default()
+    };
+
+    iced_layershell::application(Launcher::new, "brunch", Launcher::update, Launcher::view)
+        .settings(settings)
         .subscription(Launcher::subscription)
-        .decorations(false)
-        .resizable(false)
-        .window_size([760.0, 520.0])
-        .centered()
-        .level(window::Level::AlwaysOnTop)
+        .style(|_state, theme| iced_layershell::reexport::core::theme::Style {
+            background_color: iced::Color::TRANSPARENT,
+            text_color: theme.palette().text,
+        })
         .run()
 }
