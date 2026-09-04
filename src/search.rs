@@ -57,11 +57,24 @@ pub fn fuzzy_applications(
     let haystacks = scanner
         .entries()
         .iter()
-        .enumerate()
-        .map(|(index, entry)| {
+        .map(|entry| {
             let name = entry.name(&locales).unwrap_or_default();
+            let generic = entry.generic_name(&locales).unwrap_or_default();
             let comment = entry.comment(&locales).unwrap_or_default();
-            format!("{index}\t{name}\t{comment}")
+            let keywords = entry.keywords(&locales).unwrap_or_default().join(" ");
+            let categories = entry
+                .categories()
+                .unwrap_or_default()
+                .iter()
+                .filter(|category| !category.is_empty())
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let exec = entry
+                .parse_exec()
+                .map(|args| args.join(" "))
+                .unwrap_or_default();
+            format!("{name}\t{generic}\t{comment}\t{keywords}\t{categories}\t{exec}")
         })
         .collect::<Vec<_>>();
     let mut matcher = Matcher::new(Config::DEFAULT);
@@ -72,7 +85,7 @@ pub fn fuzzy_applications(
         AtomKind::Fuzzy,
     );
 
-    let matches = pattern.match_list(haystacks.iter().map(String::as_str), &mut matcher);
+    let matches = pattern.match_list(haystacks.iter(), &mut matcher);
     let minimum_score = matches
         .first()
         .map(|(_, score)| *score as f32 * MATCH_CONFIDENCE)
@@ -82,7 +95,9 @@ pub fn fuzzy_applications(
         .into_iter()
         .filter(|(_, score)| *score as f32 >= minimum_score)
         .filter_map(|(item, score)| {
-            let index = item.split_once('\t')?.0.parse::<usize>().ok()?;
+            let index = haystacks
+                .iter()
+                .position(|haystack| std::ptr::eq(haystack, item))?;
             Some(SearchResult {
                 index,
                 fuzzy_score: Some(score),

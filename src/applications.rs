@@ -91,28 +91,6 @@ impl DesktopEntryScanner {
     pub fn entries(&self) -> &[DesktopEntry] {
         &self.entries
     }
-
-    pub fn search(&self, query: &str) -> Vec<&DesktopEntry> {
-        let query = query.trim().to_lowercase();
-        let locales: &[&str] = &[];
-        self.entries
-            .iter()
-            .filter(|entry| {
-                query.is_empty()
-                    || entry
-                        .name(locales)
-                        .is_some_and(|name| name.to_lowercase().contains(&query))
-                    || entry
-                        .comment(locales)
-                        .is_some_and(|comment| comment.to_lowercase().contains(&query))
-                    || entry.keywords(locales).is_some_and(|keywords| {
-                        keywords
-                            .iter()
-                            .any(|keyword| keyword.to_lowercase().contains(&query))
-                    })
-            })
-            .collect()
-    }
 }
 
 fn collect_desktop_files(directory: &Path, paths: &mut Vec<PathBuf>) {
