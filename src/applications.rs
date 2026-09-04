@@ -1,6 +1,6 @@
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::{
-    collections::HashMap,
+    collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
 };
@@ -47,7 +47,7 @@ impl DesktopEntryScanner {
         I: IntoIterator<Item = P>,
         P: Into<PathBuf>,
     {
-        let mut seen = HashMap::new();
+        let mut seen = HashSet::new();
         let mut entries = Vec::new();
         let desktops = freedesktop_desktop_entry::current_desktop().unwrap_or_default();
         let path_dirs: Vec<PathBuf> = env::var_os("PATH")
@@ -55,24 +55,19 @@ impl DesktopEntryScanner {
             .unwrap_or_default();
 
         for directory in directories.into_iter().map(Into::into) {
-            let Ok(files) = fs::read_dir(directory) else {
-                continue;
-            };
-            let mut files = files.flatten().map(|file| file.path()).collect::<Vec<_>>();
-            files.sort();
-            for path in files {
-                if path.extension().and_then(|extension| extension.to_str()) != Some("desktop") {
-                    continue;
-                }
-                let Some(id) = path.file_name().and_then(|name| name.to_str()) else {
+            let mut paths = Vec::new();
+            collect_desktop_files(&directory, &mut paths);
+            for path in paths {
+                let Some(id) = desktop_id(&directory, &path) else {
                     continue;
                 };
-                if seen.contains_key(id) {
+                if seen.contains(&id) {
                     continue;
                 }
                 let Ok(entry) = DesktopEntry::from_path(&path, None::<&[&str]>) else {
                     continue;
                 };
+                seen.insert(id);
                 if entry.type_() != Some("Application")
                     || entry.hidden()
                     || entry.no_display()
@@ -80,7 +75,6 @@ impl DesktopEntryScanner {
                 {
                     continue;
                 }
-                seen.insert(id.to_owned(), entries.len());
                 entries.push(entry);
             }
         }
@@ -119,6 +113,68 @@ impl DesktopEntryScanner {
             })
             .collect()
     }
+}
+
+fn collect_desktop_files(directory: &Path, paths: &mut Vec<PathBuf>) {
+    let Ok(root_metadata) = fs::metadata(directory) else {
+        return;
+    };
+    if !root_metadata.is_dir() {
+        return;
+    }
+    let mut visited = HashSet::new();
+    visited.insert((root_metadata.dev(), root_metadata.ino()));
+
+    // subdirectories are pushed in reverse so they pop in sorted order
+    let mut stack = vec![directory.to_owned()];
+    while let Some(directory) = stack.pop() {
+        let Ok(children) = fs::read_dir(&directory) else {
+            continue;
+        };
+        let mut children: Vec<_> = children.flatten().collect();
+        children.sort_by_key(|child| child.file_name());
+
+        for child in children.iter().rev() {
+            let path = child.path();
+            let Ok(file_type) = child.file_type() else {
+                continue;
+            };
+            let is_directory = file_type.is_dir()
+                || (file_type.is_symlink()
+                    && fs::metadata(&path).is_ok_and(|metadata| metadata.is_dir()));
+            if !is_directory {
+                continue;
+            }
+            let Ok(metadata) = fs::metadata(&path) else {
+                continue;
+            };
+            if visited.insert((metadata.dev(), metadata.ino())) {
+                stack.push(path);
+            }
+        }
+
+        for child in &children {
+            let path = child.path();
+            if path.extension().and_then(|extension| extension.to_str()) == Some("desktop") {
+                paths.push(path);
+            }
+        }
+    }
+}
+
+// dedup key: the path relative to the applications directory with '/' replaced
+// by '-'. unlike the spec's id, the .desktop suffix is kept here — it is only
+// used for dedup, the crate strips it when deriving appid
+fn desktop_id(directory: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(directory).ok()?;
+    let mut id = String::new();
+    for (position, component) in relative.components().enumerate() {
+        if position > 0 {
+            id.push('-');
+        }
+        id.push_str(component.as_os_str().to_str()?);
+    }
+    Some(id)
 }
 
 fn should_show_entry(entry: &DesktopEntry, desktops: &[String], path_dirs: &[PathBuf]) -> bool {

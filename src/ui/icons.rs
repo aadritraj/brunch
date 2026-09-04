@@ -85,16 +85,17 @@ fn find_icon_path(icon: &Path, data_roots: impl IntoIterator<Item = PathBuf>) ->
 }
 
 fn find_flatpak_icon_path(entry: &DesktopEntry, icon: &Path) -> Option<PathBuf> {
-    let export_root = entry.path.parent()?.parent()?.parent()?;
-    if export_root.file_name().and_then(|name| name.to_str()) != Some("exports") {
-        return None;
-    }
+    let export_root = entry
+        .path
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().and_then(|name| name.to_str()) == Some("exports"))?;
     let flatpak_root = export_root.parent()?;
     if flatpak_root.file_name().and_then(|name| name.to_str()) != Some("flatpak") {
         return None;
     }
 
-    let files_root = flatpak_root.join("app").join(&entry.appid);
+    let appid = flatpak_appid(&entry.path)?;
+    let files_root = flatpak_root.join("app").join(appid);
     let mut deployments = Vec::new();
     for architecture in directories(&files_root) {
         for branch in directories(&architecture) {
@@ -108,6 +109,26 @@ fn find_flatpak_icon_path(entry: &DesktopEntry, icon: &Path) -> Option<PathBuf> 
     deployments
         .into_iter()
         .find_map(|root| find_icon_path(icon, [root]))
+}
+
+// the deployment directory is named after the first path component below the
+// applications directory; the crate's appid can differ for nested entries
+fn flatpak_appid(path: &Path) -> Option<String> {
+    let applications_root = path.ancestors().find(|ancestor| {
+        ancestor.file_name().and_then(|name| name.to_str()) == Some("applications")
+    })?;
+    let mut component = path
+        .strip_prefix(applications_root)
+        .ok()?
+        .components()
+        .next()?
+        .as_os_str()
+        .to_str()?
+        .to_owned();
+    if let Some(stem) = component.strip_suffix(".desktop") {
+        component = stem.to_owned();
+    }
+    Some(component)
 }
 
 fn has_supported_extension(path: &Path) -> bool {
