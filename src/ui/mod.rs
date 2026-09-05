@@ -39,6 +39,8 @@ pub enum ViewMode {
 
 pub struct Launcher {
     scanner: DesktopEntryScanner,
+    // resolved once at scan time, index-aligned with scanner.entries()
+    icons: Vec<Option<std::path::PathBuf>>,
     query: String,
     matches: Vec<usize>,
     selected: usize,
@@ -70,8 +72,18 @@ impl Launcher {
             .as_ref()
             .map(|d| crate::userconfig::UserConfig::load(&d.config_path(), &d.style_path()))
             .unwrap_or_default();
+        let scanner = DesktopEntryScanner::discover();
+        let icons = {
+            let mut resolver = icons::IconResolver::new();
+            scanner
+                .entries()
+                .iter()
+                .map(|entry| resolver.resolve(entry))
+                .collect()
+        };
         let mut launcher = Self {
-            scanner: DesktopEntryScanner::discover(),
+            scanner,
+            icons,
             query: String::new(),
             matches: Vec::new(),
             selected: 0,

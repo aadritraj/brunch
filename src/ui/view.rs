@@ -3,6 +3,7 @@ use iced::{
     Element, Fill, Length,
     widget::{button, column, container, image, row, scrollable, text, text_input},
 };
+use std::path::Path;
 
 use super::{Launcher, Message, RESULTS_ID, SEARCH_INPUT_ID};
 use crate::applications::DesktopAction;
@@ -27,6 +28,7 @@ pub fn render(launcher: &Launcher) -> Element<'_, Message> {
         .map(|(position, index)| {
             result_row(
                 &launcher.scanner.entries()[*index],
+                launcher.icons[*index].as_deref(),
                 *index,
                 position == launcher.selected,
                 launcher.selection == Some(*index) && launcher.selection_error.is_some(),
@@ -75,13 +77,14 @@ pub fn render(launcher: &Launcher) -> Element<'_, Message> {
 
 fn result_row<'a>(
     entry: &'a DesktopEntry,
+    icon_path: Option<&'a Path>,
     index: usize,
     selected: bool,
     failed: bool,
     locales: &[String],
     style: &'a crate::userconfig::Style,
 ) -> Element<'a, Message> {
-    let icon: Element<'_, Message> = match super::icons::handle(entry) {
+    let icon: Element<'_, Message> = match super::icons::icon(icon_path) {
         Some(super::icons::Icon::Raster(handle)) => image(handle).width(36).height(36).into(),
         Some(super::icons::Icon::Svg(handle)) => {
             iced::widget::svg(handle).width(36).height(36).into()
@@ -121,7 +124,7 @@ fn render_actions(launcher: &Launcher) -> Element<'_, Message> {
     };
     let entry = &launcher.scanner.entries()[index];
     let locales = get_languages_from_env();
-    let icon: Element<'_, Message> = match super::icons::handle(entry) {
+    let icon: Element<'_, Message> = match super::icons::icon(launcher.icons[index].as_deref()) {
         Some(super::icons::Icon::Raster(handle)) => image(handle).width(48).height(48).into(),
         Some(super::icons::Icon::Svg(handle)) => {
             iced::widget::svg(handle).width(48).height(48).into()
